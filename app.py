@@ -1,58 +1,56 @@
 import streamlit as st
 from gtts import gTTS
-from moviepy.editor import *
-import tempfile
+import ffmpeg
 import os
 
-st.set_page_config(page_title="AI TVC Generator", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="AI Video App", layout="centered")
 
-st.title("🎬 AI TVC Generator")
-st.write("Masukkan deskripsi iklanmu, pilih suara narasi, dan hasilkan video singkat otomatis!")
+st.title("🎬 AI Video App - Dengan Background Gambar")
 
-# Input user
-deskripsi = st.text_area("📝 Masukkan deskripsi iklan (copy dari LP)", height=200)
+# Input teks
+text_input = st.text_area("Masukkan teks narasi", "Halo, ini contoh narasi AI video.")
 
-# Pilihan suara
-gender = st.selectbox("🗣️ Pilih suara narator", ["Pria 1", "Pria 2", "Wanita 1", "Wanita 2"])
+# Upload gambar background
+bg_image = st.file_uploader("Upload gambar background (jpg/png)", type=["jpg", "jpeg", "png"])
 
-if st.button("🚀 Generate Video"):
-    if deskripsi.strip() == "":
-        st.warning("Harap masukkan deskripsi dulu.")
+if st.button("Generate Video"):
+    # 1. Generate audio dari teks
+    tts = gTTS(text_input, lang="id")
+    audio_file = "output.mp3"
+    tts.save(audio_file)
+
+    # 2. Cek durasi audio dengan ffmpeg
+    probe = ffmpeg.probe(audio_file)
+    duration = float(probe['format']['duration'])
+
+    # 3. Tentukan background
+    if bg_image:
+        bg_file = "background.png"
+        with open(bg_file, "wb") as f:
+            f.write(bg_image.read())
     else:
-        with st.spinner("Sedang membuat video... tunggu sebentar ⏳"):
-            # ---- 1. Generate Audio ----
-            # Mapping sederhana: semua suara pakai gTTS (beda aksen aja)
-            lang = "id"
-            tts = gTTS(deskripsi, lang=lang)
-            
-            # Simpan audio sementara
-            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-            tts.save(temp_audio.name)
+        bg_file = None
 
-            # ---- 2. Generate Video ----
-            # Background sederhana: layar putih
-            clip = ColorClip(size=(720, 480), color=(255, 255, 255), duration=10)
+    video_file = "output.mp4"
 
-            # Tambah teks
-            txt_clip = TextClip(deskripsi, fontsize=32, color='black', size=(700, 400), method="caption")
-            txt_clip = txt_clip.set_duration(10).set_position("center")
+    if bg_file:
+        # Video dengan gambar background
+        (
+            ffmpeg
+            .input(bg_file, loop=1, framerate=30)
+            .filter('scale', 1280, 720)
+            .output(audio_file, video_file, vcodec='libx264', acodec='aac', shortest=None, pix_fmt='yuv420p', t=duration)
+            .run(overwrite_output=True)
+        )
+    else:
+        # Video hitam polos
+        (
+            ffmpeg
+            .input(f'color=c=black:s=1280x720:d={duration}', f='lavfi')
+            .output(audio_file, video_file, vcodec='libx264', acodec='aac', pix_fmt='yuv420p')
+            .run(overwrite_output=True)
+        )
 
-            # Audio
-            audio_bg = AudioFileClip(temp_audio.name)
-
-            # Merge video + audio
-            final = CompositeVideoClip([clip, txt_clip])
-            final = final.set_audio(audio_bg)
-
-            # Simpan ke file sementara
-            temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            final.write_videofile(temp_video.name, codec="libx264", audio_codec="aac")
-
-            # ---- 3. Tampilkan Hasil ----
-            st.success("✅ Video berhasil dibuat!")
-            st.video(temp_video.name)
-            with open(temp_video.name, "rb") as f:
-                st.download_button("📥 Download Video", f, file_name="tvc_output.mp4", mime="video/mp4")
-
-            # Cleanup
-            os.remove(temp_audio.name)
+    st.success("✅ Video berhasil dibuat!")
+    st.video(video_file)
+    st.audio(audio_file)
