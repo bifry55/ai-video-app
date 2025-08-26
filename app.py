@@ -1,102 +1,104 @@
 import streamlit as st
-from gtts import gTTS
+import tempfile
+import os
+from pathlib import Path
 from moviepy.editor import *
-from PIL import Image, ImageDraw, ImageFont
-import textwrap, tempfile, os, numpy as np
+from google.cloud import texttospeech
+import numpy as np
 
-st.set_page_config(page_title="AI Video Ultimate Cinematic Editor", layout="centered")
-st.title("🎬 AI Video Ultimate Cinematic Editor + Preview Mode")
+# -------------------------------
+# Config AI Studio Google TTS
+# -------------------------------
+st.set_page_config(page_title="Ultimate AI Video Editor", layout="wide")
 
-# --- User Inputs ---
-narasi = st.text_area("Masukkan Deskripsi / LP", height=150)
-voice = st.radio("Pilihan Suara Narasi", ["Wanita", "Pria"])
-highlight_words = st.text_input("Highlight kata kunci (pisahkan koma)", "")
-durasi_total = st.slider("Durasi Video Total (detik)", 5, 120, 20)
-resolusi = st.selectbox("Resolusi Video", ["480p", "720p", "1080p"])
+# Setup Google TTS client
+# Pastikan sudah buat service account dan download JSON credentials
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service_account.json"
+tts_client = texttospeech.TextToSpeechClient()
 
-bg_files = st.file_uploader(
-    "Upload Background Image/Video (opsional, bisa lebih dari 1)", 
-    type=["jpg","png","mp4","mov"], accept_multiple_files=True
-)
-effect_files = st.file_uploader(
-    "Upload Efek Suara Tambahan (opsional, mp3/wav)", 
-    type=["mp3","wav"], accept_multiple_files=True
-)
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.title("Ultimate AI Video Editor – 4 Angle")
 
-text_fade_duration = st.slider("Durasi fade-in/out teks tiap baris (detik)", 1, 5, 2)
-preview_duration = st.slider("Durasi Preview (detik)", 5, 15, 5)
+# Input Deskripsi LP
+deskripsi = st.text_area("Masukkan Deskripsi / Copy-Paste LP", height=150)
 
-# --- Fungsi bantu ---
-def generate_tts_audio(text, voice_choice):
-    tld_map = {"Wanita":"com","Pria":"co.uk"}
-    tts = gTTS(text, lang='id', tld=tld_map[voice_choice])
-    temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tts.save(temp_audio.name)
-    return temp_audio.name
+# Pilihan Resolusi
+resolusi = st.selectbox("Pilih Resolusi Video", ["480p", "720p", "1080p"])
+res_map = {"480p": (854,480), "720p": (1280,720), "1080p": (1920,1080)}
 
-def pil_to_np(img):
-    return np.array(img)
+# Pilihan Suara AI Studio Google
+suara_preset = ["id-ID-Wavenet-F", "id-ID-Wavenet-M"] # contoh preset default wanita/pria
+voice_choice = st.selectbox("Pilih Suara Narasi (AI Studio Google)", suara_preset)
 
-def create_text_clip(line, font, fade_duration, dur_per_line):
-    txt_img = Image.new("RGBA", (720,480), (0,0,0,0))
-    draw = ImageDraw.Draw(txt_img)
-    draw.text((20,20), line, font=font, fill=(255,255,255))
-    txt_array = pil_to_np(txt_img)
-    clip = ImageClip(txt_array).set_duration(dur_per_line).fadein(fade_duration).fadeout(fade_duration)
-    return clip
-
-# --- Preview Mode ---
-if st.button("Update Preview"):
-    if not narasi.strip():
-        st.warning("Harap masukkan deskripsi dulu!")
+# Tombol Generate Script 4 Angle
+if st.button("Generate Script 4 Angle"):
+    if not deskripsi.strip():
+        st.warning("Isi deskripsi dulu!")
     else:
-        with st.spinner("Membuat preview video... ⏳"):
-            # Audio
-            audio_file = generate_tts_audio(narasi, voice)
-            audio_clip = AudioFileClip(audio_file).set_duration(preview_duration)
+        st.session_state["scripts"] = {}
+        angles = ["FOMO", "Benefit", "Problem-Solution", "Testimonial"]
+        for angle in angles:
+            # Dummy AI scene generation (nanti bisa diganti AI sesungguhnya)
+            scenes = [
+                f"{angle} Scene 1: {deskripsi[:50]}...",
+                f"{angle} Scene 2: {deskripsi[50:100]}...",
+                f"{angle} Scene 3: {deskripsi[100:150]}..."
+            ]
+            st.session_state["scripts"][angle] = scenes
+        st.success("Script 4 angle berhasil dibuat!")
 
-            if effect_files:
-                from moviepy.audio.AudioClip import CompositeAudioClip
-                effect_clips = [AudioFileClip(ef.name).set_duration(preview_duration) for ef in effect_files]
-                audio_clip = CompositeAudioClip([audio_clip] + effect_clips)
+# Preview + Edit per Scene
+if "scripts" in st.session_state:
+    final_videos = []
+    for angle, scenes in st.session_state["scripts"].items():
+        with st.expander(f"Preview & Edit {angle} Angle"):
+            edited_scenes = []
+            for i, scene in enumerate(scenes):
+                text = st.text_area(f"{angle} - Scene {i+1}", value=scene, key=f"{angle}_{i}")
+                edited_scenes.append(text)
+            st.session_state["scripts"][angle] = edited_scenes
+            if st.button(f"Preview {angle}", key=f"preview_{angle}"):
+                clips = []
+                for s in edited_scenes:
+                    # Generate TTS via Google TTS
+                    synthesis_input = texttospeech.SynthesisInput(text=s)
+                    voice = texttospeech.VoiceSelectionParams(
+                        language_code="id-ID", name=voice_choice
+                    )
+                    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+                    response = tts_client.synthesize_speech(
+                        input=synthesis_input, voice=voice, audio_config=audio_config
+                    )
+                    # Simpan audio sementara
+                    audio_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                    audio_file.write(response.audio_content)
+                    audio_file.close()
+                    audio_clip = AudioFileClip(audio_file.name)
+                    # Text overlay dummy
+                    txt_clip = TextClip(s, fontsize=30, color='white', size=res_map[resolusi], method='caption').set_duration(audio_clip.duration)
+                    txt_clip = txt_clip.set_audio(audio_clip)
+                    clips.append(txt_clip)
+                preview_clip = concatenate_videoclips(clips, method="compose")
+                preview_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                preview_clip.write_videofile(preview_file.name, fps=24)
+                st.video(preview_file.name)
+                # Simpan untuk generate final
+                st.session_state.setdefault("final_clips", {})[angle] = clips
 
-            # Background video/image
-            clips = []
-            if bg_files:
-                dur_per_clip = preview_duration / len(bg_files)
-                for f in bg_files:
-                    ext = f.name.split(".")[-1].lower()
-                    if ext in ["mp4","mov"]:
-                        clip = VideoFileClip(f.name).subclip(0, min(dur_per_clip, VideoFileClip(f.name).duration))
-                    else:
-                        img = Image.open(f)
-                        clip = ImageClip(pil_to_np(img)).set_duration(dur_per_clip).resize(height=480)
-                    clips.append(clip)
-                video_clip = concatenate_videoclips(clips, method="compose")
-            else:
-                video_clip = ColorClip(size=(720,480), color=(0,0,0), duration=preview_duration)
-
-            # Text overlay
-            lines = textwrap.wrap(narasi, width=40)
-            font_size = 30
-            try:
-                font = ImageFont.truetype("arial.ttf", font_size)
-            except:
-                font = ImageFont.load_default()
-            dur_per_line = preview_duration / max(len(lines),1)
-            txt_clips = [create_text_clip(line, font, text_fade_duration, dur_per_line) for line in lines]
-            text_overlay = CompositeVideoClip(txt_clips)
-
-            # Merge
-            preview_clip = CompositeVideoClip([video_clip, text_overlay])
-            preview_clip = preview_clip.set_audio(audio_clip)
-
-            # Save preview
-            preview_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            preview_clip.write_videofile(preview_file.name, fps=24, codec="libx264", audio_codec="aac")
-            st.success("✅ Preview siap ditinjau!")
-            st.video(preview_file.name)
-
-# --- Generate Final Video ---
-if st.button("Generate Final Video"):
-    st.info("Klik 'Update Preview' dulu untuk meninjau & menyetujui konten sebelum generate video final.")
+# Generate Final Video
+if "final_clips" in st.session_state and st.button("Generate Final 4 Videos"):
+    st.success("Generating final videos with AI overlay effects...")
+    for angle, clips in st.session_state["final_clips"].items():
+        # Tambahkan efek overlay AI (dummy)
+        final_clips = []
+        for clip in clips:
+            # Misal fadein/fadeout + watermark
+            clip = clip.fadein(0.5).fadeout(0.5)
+            final_clips.append(clip)
+        final_video = concatenate_videoclips(final_clips, method="compose")
+        output_file = Path(f"{angle}_Final.mp4")
+        final_video.write_videofile(str(output_file), fps=24)
+        st.video(str(output_file))
+        st.success(f"{angle} video generated!")
