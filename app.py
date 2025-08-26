@@ -1,56 +1,60 @@
 import streamlit as st
 from gtts import gTTS
-import ffmpeg
-import os
+from moviepy.editor import *
+from PIL import Image
+import tempfile
 
-st.set_page_config(page_title="AI Video App", layout="centered")
+st.set_page_config(page_title="AI Video Generator", layout="centered")
+st.title("🎬 AI Video Generator - Stable Version")
 
-st.title("🎬 AI Video App - Dengan Background Gambar")
+# Input teks deskripsi
+narasi = st.text_area("Masukkan deskripsi / LP", height=150)
 
-# Input teks
-text_input = st.text_area("Masukkan teks narasi", "Halo, ini contoh narasi AI video.")
+# Pilihan suara
+voice = st.radio("Pilihan Suara", ["Wanita", "Pria"])
 
-# Upload gambar background
-bg_image = st.file_uploader("Upload gambar background (jpg/png)", type=["jpg", "jpeg", "png"])
+# Durasi video
+durasi = st.slider("Durasi Video (detik)", 5, 60, 15)
+
+# Upload background image
+bg_image_file = st.file_uploader("Upload background image (opsional)", type=["jpg","png"])
 
 if st.button("Generate Video"):
-    # 1. Generate audio dari teks
-    tts = gTTS(text_input, lang="id")
-    audio_file = "output.mp3"
-    tts.save(audio_file)
-
-    # 2. Cek durasi audio dengan ffmpeg
-    probe = ffmpeg.probe(audio_file)
-    duration = float(probe['format']['duration'])
-
-    # 3. Tentukan background
-    if bg_image:
-        bg_file = "background.png"
-        with open(bg_file, "wb") as f:
-            f.write(bg_image.read())
+    if not narasi.strip():
+        st.warning("Harap masukkan deskripsi dulu!")
     else:
-        bg_file = None
+        with st.spinner("Sedang membuat video... ⏳"):
+            # ---- 1. Generate Audio ----
+            tts = gTTS(narasi, lang='id', tld='com')  # bisa ganti tld=co.id/ com.au kalau mau variasi suara
+            audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            tts.save(audio_temp.name)
 
-    video_file = "output.mp4"
+            # ---- 2. Generate Video ----
+            if bg_image_file:
+                # Pakai image upload
+                img = Image.open(bg_image_file)
+                img_clip = ImageClip(img).set_duration(durasi).resize(height=480)
+                video_clip = img_clip.set_position("center")
+            else:
+                # Background hitam polos
+                video_clip = ColorClip(size=(720,480), color=(0,0,0), duration=durasi)
 
-    if bg_file:
-        # Video dengan gambar background
-        (
-            ffmpeg
-            .input(bg_file, loop=1, framerate=30)
-            .filter('scale', 1280, 720)
-            .output(audio_file, video_file, vcodec='libx264', acodec='aac', shortest=None, pix_fmt='yuv420p', t=duration)
-            .run(overwrite_output=True)
-        )
-    else:
-        # Video hitam polos
-        (
-            ffmpeg
-            .input(f'color=c=black:s=1280x720:d={duration}', f='lavfi')
-            .output(audio_file, video_file, vcodec='libx264', acodec='aac', pix_fmt='yuv420p')
-            .run(overwrite_output=True)
-        )
+            # Tambah teks overlay
+            txt_clip = TextClip(narasi, fontsize=30, color='white', size=(700, None), method='caption')
+            txt_clip = txt_clip.set_duration(durasi).set_position('center')
 
-    st.success("✅ Video berhasil dibuat!")
-    st.video(video_file)
-    st.audio(audio_file)
+            # Load audio
+            audio_clip = AudioFileClip(audio_temp.name).set_duration(durasi)
+
+            # Merge video + teks + audio
+            final_clip = CompositeVideoClip([video_clip, txt_clip])
+            final_clip = final_clip.set_audio(audio_clip)
+
+            # Simpan hasil video sementara
+            output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            final_clip.write_videofile(output_file.name, fps=24, codec="libx264", audio_codec="aac")
+
+            st.success("✅ Video berhasil dibuat!")
+            st.video(output_file.name)
+            with open(output_file.name, "rb") as f:
+                st.download_button("📥 Download Video", f, file_name="tvc_output.mp4", mime="video/mp4")
