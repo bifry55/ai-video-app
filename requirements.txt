@@ -1,5 +1,3 @@
 streamlit
-gtts
-moviepy
-imageio[ffmpeg]
+gTTS
 ffmpeg-python
